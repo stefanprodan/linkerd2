@@ -131,6 +131,11 @@ func (kubeAPI *KubernetesAPI) NamespaceExists(namespace string) (bool, error) {
 	return ns != nil, nil
 }
 
+// GetDaemonSet retrieves a daemons set that has a specific name and lives in a specific namespace
+func (kubeAPI *KubernetesAPI) GetDaemonSet(namespace string, name string) (*appsv1.DaemonSet, error) {
+	return kubeAPI.Interface.AppsV1().DaemonSets(namespace).Get(name, metav1.GetOptions{})
+}
+
 // GetPodsByNamespace returns all pods in a given namespace
 func (kubeAPI *KubernetesAPI) GetPodsByNamespace(namespace string) ([]corev1.Pod, error) {
 	podList, err := kubeAPI.CoreV1().Pods(namespace).List(metav1.ListOptions{})

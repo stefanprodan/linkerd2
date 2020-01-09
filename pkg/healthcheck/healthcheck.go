@@ -132,6 +132,10 @@ const (
 	// is correct. These checks are no ops if linkerd is not in HA mode
 	LinkerdHAChecks CategoryID = "linkerd-ha-checks"
 
+	// LinkerdCniPluginChecks adds checks to validate that the CNI
+	/// plugin is installed and ready
+	LinkerdCniPluginChecks CategoryID = "linkerd-cni-plugin"
+
 	// linkerdCniResourceLabel is the label key that is used to identify
 	// whether a Kubernetes resource is related to the install-cni command
 	// The value is expected to be "true", "false" or "", where "false" and
@@ -166,6 +170,12 @@ var (
 		"linkerd-web",
 		"linkerd-tap",
 	}
+
+	expectedCniServiceAccountNames = []string{
+		"linkerd-cni",
+	}
+	expectedCniDsName = "linkerd-cni"
+	cniConfigMapName  = "linkerd-cni-config"
 )
 
 // Resource provides a way to describe a Kubernetes object, kind, and name.
@@ -319,6 +329,7 @@ type HealthChecker struct {
 	uuid             string
 	issuerCert       *tls.Cred
 	roots            []*x509.Certificate
+	cniDaemonSet     *appsv1.DaemonSet
 }
 
 // NewHealthChecker returns an initialized HealthChecker
@@ -500,14 +511,14 @@ func (hc *HealthChecker) allCategories() []category {
 					description: "no ClusterRoles exist",
 					hintAnchor:  "pre-l5d-existence",
 					check: func(context.Context) error {
-						return hc.checkClusterRoles(false)
+						return hc.checkClusterRoles(false, hc.expectedRBACNames())
 					},
 				},
 				{
 					description: "no ClusterRoleBindings exist",
 					hintAnchor:  "pre-l5d-existence",
 					check: func(context.Context) error {
-						return hc.checkClusterRoleBindings(false)
+						return hc.checkClusterRoleBindings(false, hc.expectedRBACNames())
 					},
 				},
 				{
@@ -535,11 +546,101 @@ func (hc *HealthChecker) allCategories() []category {
 					description: "no PodSecurityPolicies exist",
 					hintAnchor:  "pre-l5d-existence",
 					check: func(context.Context) error {
-						return hc.checkPodSecurityPolicies(false)
+						return hc.checkPodSecurityPolicies(false, []string{fmt.Sprintf("linkerd-%s-control-plane", hc.ControlPlaneNamespace)})
 					},
 				},
 			},
 		},
+		{
+			id: LinkerdCniPluginChecks,
+			checkers: []checker{
+				{
+					description: "cni plugin ConfigMap exists",
+					hintAnchor:  "cni-plugin-cm-exists",
+					fatal:       true,
+					check: func(context.Context) error {
+						_, err := hc.kubeAPI.CoreV1().ConfigMaps(hc.ControlPlaneNamespace).Get(cniConfigMapName, metav1.GetOptions{})
+						if err != nil {
+							return err
+						}
+						return nil
+					},
+				},
+				{
+					description: "cni plugin PodSecurityPolicy exists",
+					hintAnchor:  "cni-plugin-psp-exists",
+					fatal:       true,
+					check: func(context.Context) error {
+						return hc.checkPodSecurityPolicies(true, []string{fmt.Sprintf("linkerd-%s-cni", hc.ControlPlaneNamespace)})
+					},
+				},
+				{
+					description: "cni plugin ClusterRole exists",
+					hintAnchor:  "cni-plugin-cr-exists",
+					fatal:       true,
+					check: func(context.Context) error {
+						return hc.checkClusterRoles(true, hc.expectedCniRBACNames())
+					},
+				},
+				{
+					description: "cni plugin ClusterRoleBinding exists",
+					hintAnchor:  "cni-plugin-crb-exists",
+					fatal:       true,
+					check: func(context.Context) error {
+						return hc.checkClusterRoleBindings(true, hc.expectedCniRBACNames())
+					},
+				},
+				{
+					description: "cni plugin Role exists",
+					hintAnchor:  "cni-plugin-r-exists",
+					fatal:       true,
+					check: func(context.Context) error {
+						return hc.checkRoles(true, hc.expectedCniRBACNames())
+					},
+				},
+				{
+					description: "cni plugin RoleBinding exists",
+					hintAnchor:  "cni-plugin-rb-exists",
+					fatal:       true,
+					check: func(context.Context) error {
+						return hc.checkRoleBindings(true, hc.expectedCniRBACNames())
+					},
+				},
+				{
+					description: "cni plugin ServiceAccount exists",
+					hintAnchor:  "cni-plugin-sa-exists",
+					fatal:       true,
+					check: func(context.Context) error {
+						return hc.checkServiceAccounts(expectedCniServiceAccountNames)
+					},
+				},
+				{
+					description: "cni plugin DaemonSet exists",
+					hintAnchor:  "cni-plugin-ds-exists",
+					fatal:       true,
+					check: func(context.Context) (err error) {
+						hc.cniDaemonSet, err = hc.kubeAPI.GetDaemonSet(hc.ControlPlaneNamespace, expectedCniDsName)
+						return
+					},
+				},
+				{
+					description:         "cni plugin pod is running on all nodes",
+					hintAnchor:          "cni-plugin-ready",
+					retryDeadline:       hc.RetryDeadline,
+					surfaceErrorOnRetry: true,
+					fatal:               true,
+					check: func(ctx context.Context) error {
+						scheduled := hc.cniDaemonSet.Status.DesiredNumberScheduled
+						ready := hc.cniDaemonSet.Status.NumberReady
+						if scheduled != ready {
+							return fmt.Errorf("number ready: %d, number scheduled: %d", ready, scheduled)
+						}
+						return nil
+					},
+				},
+			},
+		},
+
 		{
 			id: LinkerdConfigChecks,
 			checkers: []checker{
@@ -556,7 +657,7 @@ func (hc *HealthChecker) allCategories() []category {
 					hintAnchor:  "l5d-existence-cr",
 					fatal:       true,
 					check: func(context.Context) error {
-						return hc.checkClusterRoles(true)
+						return hc.checkClusterRoles(true, hc.expectedRBACNames())
 					},
 				},
 				{
@@ -564,7 +665,7 @@ func (hc *HealthChecker) allCategories() []category {
 					hintAnchor:  "l5d-existence-crb",
 					fatal:       true,
 					check: func(context.Context) error {
-						return hc.checkClusterRoleBindings(true)
+						return hc.checkClusterRoleBindings(true, hc.expectedRBACNames())
 					},
 				},
 				{
@@ -604,7 +705,7 @@ func (hc *HealthChecker) allCategories() []category {
 					hintAnchor:  "l5d-existence-psp",
 					fatal:       true,
 					check: func(context.Context) error {
-						return hc.checkPodSecurityPolicies(true)
+						return hc.checkPodSecurityPolicies(true, []string{fmt.Sprintf("linkerd-%s-control-plane", hc.ControlPlaneNamespace)})
 					},
 				},
 			},
@@ -1257,7 +1358,13 @@ func (hc *HealthChecker) expectedRBACNames() []string {
 	}
 }
 
-func (hc *HealthChecker) checkClusterRoles(shouldExist bool) error {
+func (hc *HealthChecker) expectedCniRBACNames() []string {
+	return []string{
+		"linkerd-cni",
+	}
+}
+
+func (hc *HealthChecker) checkClusterRoles(shouldExist bool, expectedRoles []string) error {
 	options := metav1.ListOptions{
 		LabelSelector: k8s.ControllerNSLabel,
 	}
@@ -1277,10 +1384,33 @@ func (hc *HealthChecker) checkClusterRoles(shouldExist bool) error {
 		objects = append(objects, &item)
 	}
 
-	return checkResources("ClusterRoles", objects, hc.expectedRBACNames(), shouldExist)
+	return checkResources("ClusterRoles", objects, expectedRoles, shouldExist)
 }
 
-func (hc *HealthChecker) checkClusterRoleBindings(shouldExist bool) error {
+func (hc *HealthChecker) checkRoles(shouldExist bool, expectedRoles []string) error {
+	options := metav1.ListOptions{
+		LabelSelector: k8s.ControllerNSLabel,
+	}
+	crList, err := hc.kubeAPI.RbacV1().Roles(hc.ControlPlaneNamespace).List(options)
+	if err != nil {
+		return err
+	}
+
+	objects := []runtime.Object{}
+
+	for _, item := range crList.Items {
+
+		if hc.skipNoInitContainerResources(item.ObjectMeta.Labels) {
+			continue
+		}
+		item := item // pin
+		objects = append(objects, &item)
+	}
+
+	return checkResources("Roles", objects, expectedRoles, shouldExist)
+}
+
+func (hc *HealthChecker) checkClusterRoleBindings(shouldExist bool, expectedBidings []string) error {
 	options := metav1.ListOptions{
 		LabelSelector: k8s.ControllerNSLabel,
 	}
@@ -1300,7 +1430,30 @@ func (hc *HealthChecker) checkClusterRoleBindings(shouldExist bool) error {
 		objects = append(objects, &item)
 	}
 
-	return checkResources("ClusterRoleBindings", objects, hc.expectedRBACNames(), shouldExist)
+	return checkResources("ClusterRoleBindings", objects, expectedBidings, shouldExist)
+}
+
+func (hc *HealthChecker) checkRoleBindings(shouldExist bool, expectedBidings []string) error {
+	options := metav1.ListOptions{
+		LabelSelector: k8s.ControllerNSLabel,
+	}
+	crbList, err := hc.kubeAPI.RbacV1().RoleBindings(hc.ControlPlaneNamespace).List(options)
+	if err != nil {
+		return err
+	}
+
+	objects := []runtime.Object{}
+
+	for _, item := range crbList.Items {
+		if hc.skipNoInitContainerResources(item.ObjectMeta.Labels) {
+			continue
+		}
+
+		item := item // pin
+		objects = append(objects, &item)
+	}
+
+	return checkResources("RoleBindings", objects, expectedBidings, shouldExist)
 }
 
 func (hc *HealthChecker) isHA() bool {
@@ -1393,7 +1546,7 @@ func (hc *HealthChecker) checkValidatingWebhookConfigurations(shouldExist bool) 
 	return checkResources("ValidatingWebhookConfigurations", objects, []string{k8s.SPValidatorWebhookConfigName}, shouldExist)
 }
 
-func (hc *HealthChecker) checkPodSecurityPolicies(shouldExist bool) error {
+func (hc *HealthChecker) checkPodSecurityPolicies(shouldExist bool, pspNames []string) error {
 	options := metav1.ListOptions{
 		LabelSelector: k8s.ControllerNSLabel,
 	}
@@ -1413,7 +1566,7 @@ func (hc *HealthChecker) checkPodSecurityPolicies(shouldExist bool) error {
 		objects = append(objects, &item)
 	}
 
-	return checkResources("PodSecurityPolicies", objects, []string{fmt.Sprintf("linkerd-%s-control-plane", hc.ControlPlaneNamespace)}, shouldExist)
+	return checkResources("PodSecurityPolicies", objects, pspNames, shouldExist)
 }
 
 // MeshedPodIdentityData contains meshed pod details + root anchors of the proxy

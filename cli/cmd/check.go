@@ -19,6 +19,7 @@ import (
 type checkOptions struct {
 	versionOverride string
 	preInstallOnly  bool
+	cniOnly         bool
 	dataPlaneOnly   bool
 	wait            time.Duration
 	namespace       string
@@ -45,6 +46,7 @@ func (options *checkOptions) nonConfigFlagSet() *pflag.FlagSet {
 	flags.BoolVar(&options.cniEnabled, "linkerd-cni-enabled", options.cniEnabled, "When running pre-installation checks (--pre), assume the linkerd-cni plugin is already installed, and a NET_ADMIN check is not needed")
 	flags.StringVarP(&options.namespace, "namespace", "n", options.namespace, "Namespace to use for --proxy checks (default: all namespaces)")
 	flags.BoolVar(&options.preInstallOnly, "pre", options.preInstallOnly, "Only run pre-installation checks, to determine if the control plane can be installed")
+	flags.BoolVar(&options.cniOnly, "cni", options.cniOnly, "Only run CNI checks, to determine if the plugin is installed and ready")
 	flags.BoolVar(&options.dataPlaneOnly, "proxy", options.dataPlaneOnly, "Only run data-plane checks, to determine if the data plane is healthy")
 
 	return flags
@@ -154,6 +156,8 @@ func configureAndRunChecks(wout io.Writer, werr io.Writer, stage string, options
 		if err != nil {
 			return fmt.Errorf("Error rendering install manifest: %v", err)
 		}
+	} else if options.cniOnly {
+		checks = append(checks, healthcheck.LinkerdCniPluginChecks)
 	} else {
 		checks = append(checks, healthcheck.LinkerdConfigChecks)
 
