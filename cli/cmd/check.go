@@ -147,9 +147,10 @@ func configureAndRunChecks(wout io.Writer, werr io.Writer, stage string, options
 	}
 
 	var installManifest string
+	var cniEnabled = options.cniEnabled
 	if options.preInstallOnly {
 		checks = append(checks, healthcheck.LinkerdPreInstallChecks)
-		if !options.cniEnabled {
+		if !cniEnabled {
 			checks = append(checks, healthcheck.LinkerdPreInstallCapabilityChecks)
 		}
 		installManifest, err = renderInstallManifest()
@@ -157,10 +158,10 @@ func configureAndRunChecks(wout io.Writer, werr io.Writer, stage string, options
 			return fmt.Errorf("Error rendering install manifest: %v", err)
 		}
 	} else if options.cniOnly {
+		cniEnabled = true
 		checks = append(checks, healthcheck.LinkerdCniPluginChecks)
 	} else {
 		checks = append(checks, healthcheck.LinkerdConfigChecks)
-
 		if stage != configStage {
 			checks = append(checks, healthcheck.LinkerdControlPlaneExistenceChecks)
 			checks = append(checks, healthcheck.LinkerdAPIChecks)
@@ -172,7 +173,7 @@ func configureAndRunChecks(wout io.Writer, werr io.Writer, stage string, options
 			} else {
 				checks = append(checks, healthcheck.LinkerdControlPlaneVersionChecks)
 			}
-
+			checks = append(checks, healthcheck.LinkerdCniPluginChecks)
 			checks = append(checks, healthcheck.LinkerdHAChecks)
 		}
 	}
@@ -186,7 +187,7 @@ func configureAndRunChecks(wout io.Writer, werr io.Writer, stage string, options
 		APIAddr:               apiAddr,
 		VersionOverride:       options.versionOverride,
 		RetryDeadline:         time.Now().Add(options.wait),
-		NoInitContainer:       options.cniEnabled,
+		NoInitContainer:       cniEnabled,
 		InstallManifest:       installManifest,
 	})
 

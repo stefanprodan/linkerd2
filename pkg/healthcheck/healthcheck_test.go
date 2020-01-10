@@ -2234,7 +2234,7 @@ func TestKubeSystemNamespaceInHA(t *testing.T) {
 
 			var err error
 			hc.kubeAPI, _ = k8s.NewFakeAPI(tc.k8sConfigs...)
-			_, hc.linkerdConfig, err = hc.checkLinkerdConfigConfigMap()
+			_, hc.linkerdConfig, _, err = hc.checkLinkerdConfigConfigMap()
 			if err != nil {
 				t.Fatalf("Unexpected error: %q", err)
 			}
@@ -2588,7 +2588,7 @@ func TestLinkerdIdentityCheck(t *testing.T) {
 			issuerData := createIssuerData(testCase.certificateDNSName, testCase.lifespan.starts, testCase.lifespan.ends)
 			config := getFakeConfig(testCase.tlsSecretScheme, testCase.schemeInConfig, issuerData)
 			hc.kubeAPI, err = k8s.NewFakeAPI(config...)
-			_, hc.linkerdConfig, _ = hc.checkLinkerdConfigConfigMap()
+			_, hc.linkerdConfig, _, _ = hc.checkLinkerdConfigConfigMap()
 
 			if testCase.checkDescription != "certificate config is valid" {
 				hc.issuerCert, hc.roots, _ = hc.checkCertificatesConfig()
@@ -2968,6 +2968,7 @@ func TestCniChecks(t *testing.T) {
 			k8sConfigs := getFakeCniResources(tc.testCaseOpts)
 			var err error
 			hc.kubeAPI, err = k8s.NewFakeAPI(k8sConfigs...)
+			hc.NoInitContainer = true
 			if err != nil {
 				t.Fatalf("Unexpected error: %s", err)
 			}
